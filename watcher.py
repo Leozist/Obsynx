@@ -110,8 +110,27 @@ def push_file(path):
     except Exception as e:
         logger.info(f"   ✗ {e}")
 
+def find_existing_notion_page(parent_id, title):
+    """Check if a child page with this title exists and is not archived."""
+    try:
+        r = requests.get(
+            f"https://api.notion.com/v1/blocks/{parent_id}/children",
+            headers=HEADERS,
+            params={"page_size": 100}
+        )
+        r.raise_for_status()
+        for block in r.json().get("results", []):
+            if block.get("archived", False):
+                continue
+            if block.get("type") == "child_page":
+                if block.get("child_page", {}).get("title", "").strip() == title.strip():
+                    return block["id"]
+    except Exception:
+        pass
+    return None
+
 def resolve_parent(file_path, state):
-    """Walk folder path, creating Notion folder pages as needed."""
+    """Walk folder path, finding or creating Notion folder pages as needed."""
     ROOT = cfg["notion_root_page_id"]
     parts = list(file_path.relative_to(VAULT_PATH).parts[:-1])
 
@@ -121,9 +140,35 @@ def resolve_parent(file_path, state):
     parent_id = ROOT
     for part in parts:
         cache_key = f"__folder__{parent_id}/{part}"
+
+        # Check cache first
         if cache_key in state:
-            parent_id = state[cache_key]
+            cached_id = state[cache_key]
+            # Verify cached page still exists and is not archived
+            try:
+                r = requests.get(
+                    f"https://api.notion.com/v1/pages/{cached_id}",
+                    headers=HEADERS
+                )
+                if r.status_code == 200 and not r.json().get("archived", False):
+                    parent_id = cached_id
+                    continue
+                # Cached page is gone or archived — remove from cache and find/create
+                del state[cache_key]
+                save_json(STATE_FILE, state)
+            except Exception:
+                del state[cache_key]
+                save_json(STATE_FILE, state)
+
+        # Search for existing non-archived page with this title
+        existing = find_existing_notion_page(parent_id, part)
+        if existing:
+            state[cache_key] = existing
+            save_json(STATE_FILE, state)
+            parent_id = existing
             continue
+
+        # Create new folder page
         try:
             r = requests.post(
                 "https://api.notion.com/v1/pages",

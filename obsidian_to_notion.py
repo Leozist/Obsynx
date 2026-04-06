@@ -106,7 +106,55 @@ def find_image(filename):
     return None
 
 # ── NOTION API ─────────────────────────────────────────────────────────────────
+def find_existing_page(parent_id, title):
+    """Search for an existing child page with the given title under parent_id."""
+    try:
+        r = requests.get(
+            f"https://api.notion.com/v1/blocks/{parent_id}/children",
+            headers=HEADERS,
+            params={"page_size": 100}
+        )
+        r.raise_for_status()
+        for block in r.json().get("results", []):
+            if block.get("type") == "child_page":
+                if block.get("child_page", {}).get("title", "").strip() == title.strip():
+                    return block["id"]
+    except Exception:
+        pass
+    return None
+
+def clear_page_blocks(page_id):
+    """Delete all existing blocks from a page so it can be rewritten."""
+    try:
+        r = requests.get(
+            f"https://api.notion.com/v1/blocks/{page_id}/children",
+            headers=HEADERS,
+            params={"page_size": 100}
+        )
+        r.raise_for_status()
+        for block in r.json().get("results", []):
+            requests.delete(
+                f"https://api.notion.com/v1/blocks/{block['id']}",
+                headers=HEADERS
+            )
+            time.sleep(0.1)
+    except Exception as e:
+        print(f"    ⚠ Could not clear page blocks: {e}")
+
 def create_notion_page(parent_id, title, blocks=None):
+    """Create a new page or update existing one with the same title."""
+    existing_id = find_existing_page(parent_id, title)
+
+    if existing_id:
+        # Page exists — clear it and rewrite
+        clear_page_blocks(existing_id)
+        if blocks:
+            append_blocks(existing_id, blocks[:100])
+            if len(blocks) > 100:
+                append_blocks(existing_id, blocks[100:])
+        return existing_id
+
+    # Page does not exist — create fresh
     payload = {
         "parent": {"page_id": parent_id},
         "properties": {
@@ -120,7 +168,12 @@ def create_notion_page(parent_id, title, blocks=None):
 
     r = requests.post("https://api.notion.com/v1/pages", headers=HEADERS, json=payload)
     r.raise_for_status()
-    return r.json()["id"]
+    page_id = r.json()["id"]
+
+    if blocks and len(blocks) > 100:
+        append_blocks(page_id, blocks[100:])
+
+    return page_id
 
 def append_blocks(page_id, blocks):
     for i in range(0, len(blocks), 100):
@@ -421,9 +474,16 @@ def upload_vault():
             mtime = file.stat().st_mtime
 
             if state.get(rel) == mtime:
-                print(f"{indent}  ⏭  {file.name} (unchanged)")
-                stats["skipped"] += 1
-                continue
+                # mtime matches — but verify the page actually exists in Notion
+                existing = find_existing_page(parent_id, file.stem)
+                if existing:
+                    print(f"{indent}  ⏭  {file.name} (unchanged)")
+                    stats["skipped"] += 1
+                    continue
+                else:
+                    # State says uploaded but page is missing — force re-push
+                    print(f"{indent}  📄 {file.name} (missing from Notion — re-pushing)")
+                    del state[rel]
 
             print(f"{indent}  📄 {file.name}")
             try:
