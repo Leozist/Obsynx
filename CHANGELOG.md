@@ -2,6 +2,17 @@
 
 ---
 
+## Unreleased
+
+### Added
+- **macOS installer** (`install_macos.sh`) — native installer for macOS. Uses Homebrew/system Python (no `apt`), a `launchd` LaunchAgent for the watcher instead of systemd (screen mode still available as a fallback), and correctly targets `.zshrc` or `.bash_profile` depending on `$SHELL` since macOS Terminal launches a login shell. Includes the same Fresh install / Reconfigure / Verify / Uninstall menu as the other installers.
+- **Explicit automation opt-in** — Linux and macOS installers now ask at install time whether to enable the auto-push watcher at all, defaulting to **off**. Reconfigure can toggle it on or off later without a reinstall. Pulling from Notion remains manual-only on every platform regardless of this setting — Obsynx never auto-pulls.
+
+### Fixed
+- **Duplicate-page bug** — `find_existing_page` (push) and `find_existing_notion_page` (watcher) only checked the first 100 children of a parent page and did not paginate. Once a Notion folder or the root page passed 100 notes, existing pages beyond that first page became invisible to the duplicate check, so every subsequent push created a brand-new page instead of updating the existing one. Both functions now page through all children via `has_more`/`next_cursor` before deciding to create vs. update.
+
+---
+
 ## v1.2.0 — 2026-04-06
 
 ### Fixed

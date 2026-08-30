@@ -111,20 +111,29 @@ def push_file(path):
         logger.info(f"   ✗ {e}")
 
 def find_existing_notion_page(parent_id, title):
-    """Check if a child page with this title exists and is not archived."""
+    """Check if a child page with this title exists and is not archived (paginates through all children)."""
     try:
-        r = requests.get(
-            f"https://api.notion.com/v1/blocks/{parent_id}/children",
-            headers=HEADERS,
-            params={"page_size": 100}
-        )
-        r.raise_for_status()
-        for block in r.json().get("results", []):
-            if block.get("archived", False):
-                continue
-            if block.get("type") == "child_page":
-                if block.get("child_page", {}).get("title", "").strip() == title.strip():
-                    return block["id"]
+        cursor = None
+        while True:
+            params = {"page_size": 100}
+            if cursor:
+                params["start_cursor"] = cursor
+            r = requests.get(
+                f"https://api.notion.com/v1/blocks/{parent_id}/children",
+                headers=HEADERS,
+                params=params
+            )
+            r.raise_for_status()
+            data = r.json()
+            for block in data.get("results", []):
+                if block.get("archived", False):
+                    continue
+                if block.get("type") == "child_page":
+                    if block.get("child_page", {}).get("title", "").strip() == title.strip():
+                        return block["id"]
+            if not data.get("has_more"):
+                break
+            cursor = data.get("next_cursor")
     except Exception:
         pass
     return None
